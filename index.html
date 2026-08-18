@@ -296,7 +296,7 @@
       <div class="card">
         <h2><span class="ic">📊</span>专属指标</h2>
         <div class="grid cols-3" id="metricBox">
-          <div class="metric"><div class="v">--</div><div class="l">BMI</div></div>
+          <div class="metric"><div class="v">--</div><div class="l">BMI</div><div class="tag">--</div></div>
           <div class="metric"><div class="v">--</div><div class="l">基础代谢 BMR</div></div>
           <div class="metric"><div class="v">--</div><div class="l">每日消耗 TDEE</div></div>
           <div class="metric"><div class="v">--</div><div class="l">建议摄入</div></div>
@@ -767,13 +767,16 @@ function renderProfileForm(){
 function renderMetrics(){
   const p=loadProfile(); if(!p)return;
   const c=calc(p), m=$('metricBox').children, [bt,col]=bmiTag(c.bmi);
+  if(!m.length) return;
+  const tag0=m[0].querySelector('.tag');
+  if(!tag0){ const t=document.createElement('div'); t.className='tag'; m[0].appendChild(t); }
   m[0].querySelector('.v').textContent=c.bmi.toFixed(1);
-  m[0].querySelector('.tag').textContent=bt; m[0].querySelector('.tag').style.background=col+'22'; m[0].querySelector('.tag').style.color=col;
-  m[1].querySelector('.v').textContent=c.bmr; m[1].querySelector('.l').textContent='基础代谢 BMR (kcal)';
-  m[2].querySelector('.v').textContent=c.tdee; m[2].querySelector('.l').textContent='每日消耗 TDEE (kcal)';
-  m[3].querySelector('.v').textContent=c.intake; m[3].querySelector('.l').textContent='建议摄入 (kcal)';
-  m[4].querySelector('.v').textContent=c.deficit; m[4].querySelector('.l').textContent='每日缺口 (kcal)';
-  m[5].querySelector('.v').textContent=c.days>0?c.days+'天':'(已达标)'; m[5].querySelector('.l').textContent='预计达成 '+c.eta;
+  const t0=m[0].querySelector('.tag'); t0.textContent=bt; t0.style.background=col+'22'; t0.style.color=col;
+  if(m[1]){ m[1].querySelector('.v').textContent=c.bmr; m[1].querySelector('.l').textContent='基础代谢 BMR (kcal)'; }
+  if(m[2]){ m[2].querySelector('.v').textContent=c.tdee; m[2].querySelector('.l').textContent='每日消耗 TDEE (kcal)'; }
+  if(m[3]){ m[3].querySelector('.v').textContent=c.intake; m[3].querySelector('.l').textContent='建议摄入 (kcal)'; }
+  if(m[4]){ m[4].querySelector('.v').textContent=c.deficit; m[4].querySelector('.l').textContent='每日缺口 (kcal)'; }
+  if(m[5]){ m[5].querySelector('.v').textContent=c.days>0?c.days+'天':'(已达标)'; m[5].querySelector('.l').textContent='预计达成 '+c.eta; }
   $('metricHint').innerHTML='按当前节奏（每周约减 '+p.rate+'kg），预计 <b>'+c.eta+'</b> 达成目标。建议摄入已留安全下限。';
 }
 function renderMeals(){

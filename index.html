@@ -1022,6 +1022,13 @@ function exportData(){
 function clearAll(){ if(confirm('确定清空全部档案与打卡记录？此操作不可恢复。')){ localStorage.removeItem(LS_PROFILE); localStorage.removeItem(LS_LOG); alert('已清空。重新填写档案即可开始。'); location.reload(); } }
 function restartFromToday(){ if(confirm('从今天重新开始？\n\n• 保留档案（身高体重、重点部位等）\n• 清空所有打卡记录\n• 清空云同步状态')){ localStorage.removeItem(LS_LOG); localStorage.removeItem(LS_SYNC); location.reload(); } }
 
+async function testAIConnection(a){
+  const body={ model:a.model, messages:[{role:'user',content:'你好，请只回复 ok'}], temperature:0.2, max_tokens:5 };
+  const res=await fetch(a.base.replace(/\/$/,'')+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+a.key},body:JSON.stringify(body)});
+  if(!res.ok){ let t=''; try{t=await res.text();}catch{} throw new Error('HTTP '+res.status+(t?(' '+t.slice(0,200)):'')); }
+  return true;
+}
+
 /* ============ 事件 ============ */
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
   document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active')); t.classList.add('active');
@@ -1071,7 +1078,7 @@ $('clearBtn').onclick=clearAll;
 $('restartBtn').onclick=restartFromToday;
 $('aiPreset').onchange=()=>{ const p=AI_PRESETS[$('aiPreset').value]; if(p){ $('aiBase').value=p.base; $('aiModel').value=p.model; } };
 $('aiSave').onclick=()=>{ const a={preset:$('aiPreset').value,base:$('aiBase').value.trim(),key:$('aiKey').value.trim(),model:$('aiModel').value.trim()}; if(!a.base||!a.key||!a.model){ $('aiMsg').textContent='请填齐 Base URL / Key / 模型名'; $('aiMsg').style.color='var(--danger)'; return; } saveAI(a); $('aiMsg').textContent='✓ 已保存'; $('aiMsg').style.color='var(--good)'; setTimeout(()=>$('aiMsg').textContent='',2500); };
-$('aiTest').onclick=async()=>{ const a={base:$('aiBase').value.trim(),key:$('aiKey').value.trim(),model:$('aiModel').value.trim()}; if(!a.base||!a.key||!a.model){ $('aiMsg').textContent='先填齐再测试'; $('aiMsg').style.color='var(--danger)'; return; } $('aiMsg').textContent='连接中…'; $('aiMsg').style.color='var(--brand)'; try{ const r=await callVision(a,'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC','这是一张测试图，请只回复 JSON：{"ok":true}',true); $('aiMsg').textContent='✓ 连接成功，模型有返回'; $('aiMsg').style.color='var(--good)'; }catch(e){ $('aiMsg').textContent='✗ 失败：'+(e.message||e); $('aiMsg').style.color='var(--danger)'; } };
+$('aiTest').onclick=async()=>{ const a={base:$('aiBase').value.trim(),key:$('aiKey').value.trim(),model:$('aiModel').value.trim()}; if(!a.base||!a.key||!a.model){ $('aiMsg').textContent='先填齐再测试'; $('aiMsg').style.color='var(--danger)'; return; } $('aiMsg').textContent='连接中…'; $('aiMsg').style.color='var(--brand)'; try{ await testAIConnection(a); $('aiMsg').textContent='✓ 连接成功，模型可正常响应'; $('aiMsg').style.color='var(--good)'; }catch(e){ $('aiMsg').textContent='✗ 失败：'+(e.message||e); $('aiMsg').style.color='var(--danger)'; } };
 
 /* 云同步：事件 */
 $('syncProvider').onchange=()=>{ const s=loadSync(); s.provider=$('syncProvider').value; saveSync(s); renderSync(); syncMsg('已切换同步方式','good'); };

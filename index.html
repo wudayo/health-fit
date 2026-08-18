@@ -265,6 +265,7 @@
             <label class="chk"><input type="checkbox" value="cycling"/>🚴 骑行</label>
             <label class="chk"><input type="checkbox" value="badminton"/>🏸 羽毛球</label>
             <label class="chk"><input type="checkbox" value="running"/>🏃 跑步</label>
+            <label class="chk"><input type="checkbox" value="walk"/>🚶 快走</label>
             <label class="chk"><input type="checkbox" value="rope"/>🪢 跳绳</label>
             <label class="chk"><input type="checkbox" value="hula"/>🌀 呼啦圈</label>
           </div>
@@ -342,6 +343,7 @@
         <h2><span class="ic">🗑️</span>数据管理</h2>
         <p class="sub">所有数据仅存在本机浏览器，可随时导出或清空</p>
         <button class="btn ghost" id="exportBtn">导出我的数据 (JSON)</button>
+        <button class="btn ghost" id="restartBtn" style="background:var(--brand-soft);color:var(--brand);margin-top:8px;">🔄 从今天重新开始（保留档案，清空打卡）</button>
         <button class="btn ghost" id="clearBtn" style="background:#fdecea;color:var(--danger);">清空全部记录</button>
       </div>
     </section>
@@ -533,6 +535,10 @@ const SPORTS = {
     tips:['小步高频，步幅别太大，落地在重心下方','上身挺直微前倾，摆臂前后不交叉','前脚掌/全脚掌落地，膝盖微屈缓冲','呼吸节奏 2 步吸 2 步呼'],
     warm:['动态拉伸：摆腿、高抬腿、后踢 各 30 秒','慢走 3 分钟再开跑'],
     plan:'新手：跑走结合（跑 2 分钟走 1 分钟），总 30 分钟；每周 3 次'},
+  walk:{name:'快走',icon:'🚶',search:'快走 教学 正确姿势 走路',
+    tips:['抬头挺胸、下巴微收，眼睛看前方 10 米','自然摆臂，前脚掌先着地、脚跟过渡，膝盖朝前','步幅自然别跨大步，约每分钟 100–120 步','穿软底缓震鞋，饭后 30 分钟再走'],
+    warm:['原地踏步 1 分钟热身','活动脚踝：左右各 30 秒'],
+    plan:'新手：每次 30–45 分钟，速度以"微喘能说话"为宜；每天都能走，燃脂日的好搭档'},
   rope:{name:'跳绳',icon:'🪢',search:'跳绳 教学 新手 正确姿势',
     tips:['手腕摇绳而非整臂，绳长：单脚踩住柄到腋下','前脚掌轻跳，离地 2–3cm，落地缓冲','保持节奏稳定，呼吸自然','穿缓震鞋，硬地少跳护膝'],
     warm:['活动踝/腕/膝 各 1 分钟','原地小跳 30 秒找节奏'],
@@ -771,7 +777,7 @@ function compressImg(file,cb){
 /* 运动记录 */
 function renderExLog(){
   const d=getDay(), p=loadProfile(); const w=p?p.weight:60;
-  const opts=Object.keys(SPORTS).map(k=>`<option value="${k}">${SPORTS[k].icon} ${SPORTS[k].name}</option>`).join('')+'<option value="walk">🚶 快走</option>';
+  const opts=Object.keys(SPORTS).map(k=>`<option value="${k}">${SPORTS[k].icon} ${SPORTS[k].name}</option>`).join('');
   $('exSport').innerHTML=opts;
   const list=(d.exercise||[]).map((x,i)=>`<li>${SPORTS[x.sport]?SPORTS[x.sport].icon:'🚶'} ${SPORTS[x.sport]?SPORTS[x.sport].name:(x.sport==='walk'?'快走':x.sport)} ${x.min} 分钟 <b>≈${burnOf(x.sport,x.min,w)} kcal</b> <button class="x2" data-x="ex" data-i="${i}">×</button></li>`).join('');
   $('exList').innerHTML=list||'<li style="color:var(--ink-soft)">还没记录运动</li>';
@@ -888,6 +894,7 @@ function exportData(){
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='健康减肥数据_'+todayStr()+'.json'; a.click();
 }
 function clearAll(){ if(confirm('确定清空全部档案与打卡记录？此操作不可恢复。')){ localStorage.removeItem(LS_PROFILE); localStorage.removeItem(LS_LOG); alert('已清空。重新填写档案即可开始。'); location.reload(); } }
+function restartFromToday(){ if(confirm('从今天重新开始？\n\n• 保留档案（身高体重、重点部位等）\n• 清空所有打卡记录\n• 清空云同步状态')){ localStorage.removeItem(LS_LOG); localStorage.removeItem(LS_SYNC); location.reload(); } }
 
 /* ============ 事件 ============ */
 document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>{
@@ -934,6 +941,7 @@ $('saveToday').onclick=()=>{ const d=getDay(); const w=parseFloat($('inWeight').
   $('saveMsg').textContent='✓ 已保存今日'; setTimeout(()=>$('saveMsg').textContent='',2500); renderProgress(); };
 $('exportBtn').onclick=exportData;
 $('clearBtn').onclick=clearAll;
+$('restartBtn').onclick=restartFromToday;
 $('aiPreset').onchange=()=>{ const p=AI_PRESETS[$('aiPreset').value]; if(p){ $('aiBase').value=p.base; $('aiModel').value=p.model; } };
 $('aiSave').onclick=()=>{ const a={preset:$('aiPreset').value,base:$('aiBase').value.trim(),key:$('aiKey').value.trim(),model:$('aiModel').value.trim()}; if(!a.base||!a.key||!a.model){ $('aiMsg').textContent='请填齐 Base URL / Key / 模型名'; $('aiMsg').style.color='var(--danger)'; return; } saveAI(a); $('aiMsg').textContent='✓ 已保存'; $('aiMsg').style.color='var(--good)'; setTimeout(()=>$('aiMsg').textContent='',2500); };
 $('aiTest').onclick=async()=>{ const a={base:$('aiBase').value.trim(),key:$('aiKey').value.trim(),model:$('aiModel').value.trim()}; if(!a.base||!a.key||!a.model){ $('aiMsg').textContent='先填齐再测试'; $('aiMsg').style.color='var(--danger)'; return; } $('aiMsg').textContent='连接中…'; $('aiMsg').style.color='var(--brand)'; try{ const r=await callVision(a,'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M8AAAMBAQDJ/pLvAAAAAElFTkSuQmCC','这是一张测试图，请只回复 JSON：{"ok":true}',true); $('aiMsg').textContent='✓ 连接成功，模型有返回'; $('aiMsg').style.color='var(--good)'; }catch(e){ $('aiMsg').textContent='✗ 失败：'+(e.message||e); $('aiMsg').style.color='var(--danger)'; } };

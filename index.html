@@ -468,33 +468,35 @@ function parseVision(s){
 function aiScan(type){
   const a=loadAI();
   if(!a.base||!a.key||!a.model){ alert('请先到「设置」填写 AI 识别的 API 信息'); return; }
-  const input=document.createElement('input'); input.type='file'; input.accept='image/*'; input.capture='environment';
-  input.onchange=()=>{ const file=input.files[0]; if(!file)return;
-    const status=document.querySelector('.ai-status[data-t="'+type+'"]'); if(status){status.textContent='识别中…';status.className='ai-status busy';}
-    compressImg(file,async(dataUrl)=>{
-      const d=getDay(); d.meals[type]=d.meals[type]||{photos:[],items:[]}; d.meals[type].photos=d.meals[type].photos||[];
-      if(d.meals[type].photos.length<6)d.meals[type].photos.push(dataUrl); putDay(d); renderMealLog();
-      try{
-        /* 构造今日背景：目标摄入 / 已摄入 / 运动消耗 / 剩余配额 */
-        let ctx='';
-        const p=loadProfile();
-        if(p){ const c=calc(p); const inK=MEAL_TYPES.reduce((a,[t])=>a+((d.meals[t]&&d.meals[t].items)?d.meals[t].items.reduce((s,i)=>s+i.k,0):0),0);
-          const burn=(d.exercise||[]).reduce((a,x)=>a+burnOf(x.sport,x.min,p.weight),0);
-          const net=Math.round(c.intake-inK+burn);
-          ctx='目标摄入 '+c.intake+' kcal；今日已记录摄入 '+inK+' kcal；运动消耗 '+burn+' kcal；'+(net>=0?'还可吃 '+net+' kcal':'已超出 '+(-net)+' kcal')+'。用户身高'+p.height+'cm 体重'+p.weight+'kg 目标'+p.goal+'kg。';
-        }
-        const content=await callVision(a,dataUrl,'请识别这张餐食并估算热量，按约定JSON返回',false,ctx);
-        const parsed=parseVision(content);
-        if(parsed&&parsed.items&&parsed.items.length){
-          const dd=getDay(); parsed.items.forEach(it=>{ const k=Math.round(it.kcal||0); if(it.name&&k>0)dd.meals[type].items.push({n:it.name,k}); });
-          if(parsed.advice) dd.meals[type].advice=parsed.advice; else delete dd.meals[type].advice;
-          putDay(dd); renderMealLog(); renderTodaySummary();
-          if(status){status.textContent='✓ 识别 '+parsed.items.length+' 种，共 '+(parsed.totalKcal||'?')+' kcal';status.className='ai-status';}
-        } else if(status){ status.textContent='未解析到食物，可手动添加'; status.className='ai-status'; }
-      }catch(e){ if(status){status.textContent='✗ 失败：'+(e.message||e);status.className='ai-status err';} }
-    });
-  };
+  const cur=getDay(); const ph=(cur.meals[type]&&cur.meals[type].photos)||[];
+  if(ph.length){ runVision(type, ph[ph.length-1]); return; } // 已有照片，直接用最后一张识别，不弹相机
+  const input=document.createElement('input'); input.type='file'; input.accept='image/*'; // 不强制相机，可从相册选择
+  input.onchange=()=>{ const file=input.files[0]; if(!file)return; compressImg(file,du=>runVision(type,du)); };
   input.click();
+}
+async function runVision(type,dataUrl){
+  const a=loadAI();
+  const status=document.querySelector('.ai-status[data-t="'+type+'"]'); if(status){status.textContent='识别中…';status.className='ai-status busy';}
+  const d=getDay(); d.meals[type]=d.meals[type]||{photos:[],items:[]}; d.meals[type].photos=d.meals[type].photos||[];
+  if(dataUrl && d.meals[type].photos.indexOf(dataUrl)<0 && d.meals[type].photos.length<6)d.meals[type].photos.push(dataUrl); putDay(d); renderMealLog();
+  try{
+    /* 构造今日背景：目标摄入 / 已摄入 / 运动消耗 / 剩余配额 */
+    let ctx='';
+    const p=loadProfile();
+    if(p){ const c=calc(p); const inK=MEAL_TYPES.reduce((a,[t])=>a+((d.meals[t]&&d.meals[t].items)?d.meals[t].items.reduce((s,i)=>s+i.k,0):0),0);
+      const burn=(d.exercise||[]).reduce((a,x)=>a+burnOf(x.sport,x.min,p.weight),0);
+      const net=Math.round(c.intake-inK+burn);
+      ctx='目标摄入 '+c.intake+' kcal；今日已记录摄入 '+inK+' kcal；运动消耗 '+burn+' kcal；'+(net>=0?'还可吃 '+net+' kcal':'已超出 '+(-net)+' kcal')+'。用户身高'+p.height+'cm 体重'+p.weight+'kg 目标'+p.goal+'kg。';
+    }
+    const content=await callVision(a,dataUrl,'请识别这张餐食并估算热量，按约定JSON返回',false,ctx);
+    const parsed=parseVision(content);
+    if(parsed&&parsed.items&&parsed.items.length){
+      const dd=getDay(); parsed.items.forEach(it=>{ const k=Math.round(it.kcal||0); if(it.name&&k>0)dd.meals[type].items.push({n:it.name,k}); });
+      if(parsed.advice) dd.meals[type].advice=parsed.advice; else delete dd.meals[type].advice;
+      putDay(dd); renderMealLog(); renderTodaySummary();
+      if(status){status.textContent='✓ 识别 '+parsed.items.length+' 种，共 '+(parsed.totalKcal||'?')+' kcal';status.className='ai-status';}
+    } else if(status){ status.textContent='未解析到食物，可手动添加'; status.className='ai-status'; }
+  }catch(e){ if(status){status.textContent='✗ 失败：'+(e.message||e);status.className='ai-status err';} }
 }
 /* 用已拍照片点评（不重复识别热量，只给建议） */
 async function aiAdvise(type){

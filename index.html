@@ -119,6 +119,8 @@
   .ai-status { font-size:12px; color:var(--ink-soft); }
   .ai-status.busy { color:var(--brand); }
   .ai-status.err { color:var(--danger); }
+  .ai-advice { font-size:13px; color:#7a4a12; background:#fff8ec; border:1px solid #f3e2bf; border-radius:10px; padding:9px 11px; margin-top:8px; line-height:1.6; }
+  .ai-advice b { color:#a05a00; }
   /* 重点部位训练 */
   .ftitle { font-weight:700; font-size:14px; color:var(--ink); margin:2px 0 4px; display:flex; align-items:center; gap:8px; }
   .flist { list-style:none; margin:0; padding:0; }
@@ -340,6 +342,11 @@
         <div class="hint">测量时机固定（如晨起空腹）：腰围量肚脐上 1 指，臂围量肱二头肌最粗处，臀围量最宽处。</div>
       </div>
       <div class="card" style="margin-top:14px;">
+        <h2><span class="ic">📋</span>本周复盘 <span class="badge-new">NEW</span></h2>
+        <p class="sub" id="reviewSub">自动统计最近 7 天，帮你发现本周做得好的和该调整的</p>
+        <div id="reviewBox"></div>
+      </div>
+      <div class="card" style="margin-top:14px;">
         <h2><span class="ic">🗑️</span>数据管理</h2>
         <p class="sub">所有数据仅存在本机浏览器，可随时导出或清空</p>
         <button class="btn ghost" id="exportBtn">导出我的数据 (JSON)</button>
@@ -438,9 +445,9 @@ const LS_AI='hlb_ai';
 function loadAI(){ try{ return JSON.parse(localStorage.getItem(LS_AI))||{preset:'',base:'',key:'',model:''}; }catch{ return {preset:'',base:'',key:'',model:''}; } }
 function saveAI(a){ localStorage.setItem(LS_AI,JSON.stringify(a)); }
 const AI_PRESETS={ openai:{base:'https://api.openai.com/v1',model:'gpt-4o'}, qwen:{base:'https://dashscope.aliyuncs.com/compatible-mode/v1',model:'qwen-vl-max'}, zhipu:{base:'https://open.bigmodel.cn/api/paas/v4',model:'glm-4v-plus'}, kimi:{base:'https://api.moonshot.cn/v1',model:'moonshot-v1-8k-vision-preview'}, doubao:{base:'https://ark.cn-beijing.volces.com/api/v3',model:'doubao-vision-lite'}, deepseek:{base:'https://api.siliconflow.cn/v1',model:'deepseek-ai/deepseek-vl2'} };
-async function callVision(a,imageUrl,text,simple){
+async function callVision(a,imageUrl,text,simple,context){
   const body={ model:a.model, messages:[
-    {role:'system',content: simple? 'You are a test assistant. Reply briefly.' : '你是营养师助手。用户发来一餐食物照片。请用中文识别食物，估算每种食物的份量(克)与热量(kcal)。只输出一个JSON对象，不要任何额外文字，格式：{"items":[{"name":"食物名","grams":150,"kcal":261}],"totalKcal":261}。看不清就尽量估算。'},
+    {role:'system',content: simple? 'You are a test assistant. Reply briefly.' : ('你是专业的减肥营养师兼健身教练。用户发来一餐食物照片。请完成两件事：\n1) 识别食物，估算每种食物的份量(克)与热量(kcal)。\n2) 用中文给出简短、具体、可执行的点评建议(advice)，包括：这餐的优点/问题、下一餐或明天怎么调整、如何更接近今日目标。建议 2-3 句，口语化，别客套。\n只输出一个JSON对象，不要任何额外文字，格式：{"items":[{"name":"食物名","grams":150,"kcal":261}],"totalKcal":261,"advice":"点评建议"}。看不清就尽量估算。'+(context?('\n今日背景：'+context):''))},
     {role:'user',content:[{type:'text',text:text},{type:'image_url',image_url:{url:imageUrl}}]}
   ], temperature:0.2 };
   const res=await fetch(a.base.replace(/\/$/,'')+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+a.key},body:JSON.stringify(body)});
@@ -463,16 +470,50 @@ function aiScan(type){
       const d=getDay(); d.meals[type]=d.meals[type]||{photos:[],items:[]}; d.meals[type].photos=d.meals[type].photos||[];
       if(d.meals[type].photos.length<6)d.meals[type].photos.push(dataUrl); putDay(d); renderMealLog();
       try{
-        const content=await callVision(a,dataUrl,'请识别这张餐食并估算热量，按约定JSON返回');
+        /* 构造今日背景：目标摄入 / 已摄入 / 运动消耗 / 剩余配额 */
+        let ctx='';
+        const p=loadProfile();
+        if(p){ const c=calc(p); const inK=MEAL_TYPES.reduce((a,[t])=>a+((d.meals[t]&&d.meals[t].items)?d.meals[t].items.reduce((s,i)=>s+i.k,0):0),0);
+          const burn=(d.exercise||[]).reduce((a,x)=>a+burnOf(x.sport,x.min,p.weight),0);
+          const net=Math.round(c.intake-inK+burn);
+          ctx='目标摄入 '+c.intake+' kcal；今日已记录摄入 '+inK+' kcal；运动消耗 '+burn+' kcal；'+(net>=0?'还可吃 '+net+' kcal':'已超出 '+(-net)+' kcal')+'。用户身高'+p.height+'cm 体重'+p.weight+'kg 目标'+p.goal+'kg。';
+        }
+        const content=await callVision(a,dataUrl,'请识别这张餐食并估算热量，按约定JSON返回',false,ctx);
         const parsed=parseVision(content);
         if(parsed&&parsed.items&&parsed.items.length){
-          const dd=getDay(); parsed.items.forEach(it=>{ const k=Math.round(it.kcal||0); if(it.name&&k>0)dd.meals[type].items.push({n:it.name,k}); }); putDay(dd); renderMealLog(); renderTodaySummary();
+          const dd=getDay(); parsed.items.forEach(it=>{ const k=Math.round(it.kcal||0); if(it.name&&k>0)dd.meals[type].items.push({n:it.name,k}); });
+          if(parsed.advice) dd.meals[type].advice=parsed.advice; else delete dd.meals[type].advice;
+          putDay(dd); renderMealLog(); renderTodaySummary();
           if(status){status.textContent='✓ 识别 '+parsed.items.length+' 种，共 '+(parsed.totalKcal||'?')+' kcal';status.className='ai-status';}
         } else if(status){ status.textContent='未解析到食物，可手动添加'; status.className='ai-status'; }
       }catch(e){ if(status){status.textContent='✗ 失败：'+(e.message||e);status.className='ai-status err';} }
     });
   };
   input.click();
+}
+/* 用已拍照片点评（不重复识别热量，只给建议） */
+async function aiAdvise(type){
+  const a=loadAI();
+  if(!a.base||!a.key||!a.model){ alert('请先到「设置」填写 AI 识别的 API 信息'); return; }
+  const d=getDay(); const m=d.meals[type]||{};
+  const photos=m.photos||[];
+  if(!photos.length){ alert('这餐还没有照片，先点「AI识别这餐」或手动传一张'); return; }
+  const status=document.querySelector('.ai-status[data-t="'+type+'"]'); if(status){status.textContent='点评中…';status.className='ai-status busy';}
+  try{
+    let ctx='';
+    const p=loadProfile();
+    if(p){ const c=calc(p); const inK=MEAL_TYPES.reduce((a,[t])=>a+((d.meals[t]&&d.meals[t].items)?d.meals[t].items.reduce((s,i)=>s+i.k,0):0),0);
+      const burn=(d.exercise||[]).reduce((a,x)=>a+burnOf(x.sport,x.min,p.weight),0);
+      const net=Math.round(c.intake-inK+burn);
+      const thisK=((m.items)||[]).reduce((s,i)=>s+i.k,0);
+      ctx='目标摄入 '+c.intake+' kcal；今日已记录摄入 '+inK+' kcal；其中这一餐已记 '+thisK+' kcal；运动消耗 '+burn+' kcal；'+(net>=0?'还可吃 '+net+' kcal':'已超出 '+(-net)+' kcal')+'。用户身高'+p.height+'cm 体重'+p.weight+'kg 目标'+p.goal+'kg。';
+    }
+    const content=await callVision(a,photos[photos.length-1],'请点评这餐：营养搭配、吃多了还是少了、下一餐怎么调整。只输出JSON：{"advice":"2-3句中文点评"}',false,ctx);
+    const parsed=parseVision(content);
+    const advice=(parsed&&parsed.advice)?parsed.advice:(content||'').replace(/```[a-z]*/gi,'').replace(/```/g,'').trim();
+    if(advice){ const dd=getDay(); dd.meals[type].advice=advice; putDay(dd); renderMealLog(); }
+    if(status){status.textContent=advice?'✓ 已生成点评':'未生成点评';status.className='ai-status';}
+  }catch(e){ if(status){status.textContent='✗ 失败：'+(e.message||e);status.className='ai-status err';} }
 }
 function renderSettings(){ const a=loadAI(); $('aiPreset').value=a.preset||''; $('aiBase').value=a.base||''; $('aiKey').value=a.key||''; $('aiModel').value=a.model||''; renderSync(); }
 /* ============ 云同步（GitHub Gist / 自定义） ============ */
@@ -652,15 +693,41 @@ function renderFocus(){
 }
 function focusLi(ex,done){ const on=done[ex.name]?'on':''; const demo=ANIM[ex.name]?('<div class="demo">'+ANIM[ex.name]+'<div class="demo-cap">动图演示（离线也能看）</div></div>'):''; const gurl='https://search.bilibili.com/all?keyword='+encodeURIComponent(ex.gif||(ex.name+' 教学')); return '<li class="'+on+'"><label class="fchk"><input type="checkbox" data-x="focus" data-n="'+ex.name+'" '+(done[ex.name]?'checked':'')+'/> <b>'+ex.name+'</b> <span class="fsets">'+ex.sets+'</span>'+(ex.equip?' <span class="badge" style="background:#7a8a98">'+ex.equip+'</span>':'')+'</label><div class="ftip">💡 '+ex.tip+'</div>'+demo+'<a class="btn ghost sm" href="'+gurl+'" target="_blank" rel="noopener" style="margin-top:5px;">🔍 看真人动图教学（B站）</a></li>'; }
 
-/* ============ 饮食建议 ============ */
-function mealPlan(intake){
+/* ============ 饮食建议（按身材定制） ============ */
+function mealPlan(intake,p){
+  p=p||loadProfile()||{};
   const b=Math.round(intake*0.25),l=Math.round(intake*0.35),d=Math.round(intake*0.30),s=Math.round(intake*0.10);
-  return [
-    {name:'早餐',kc:b,items:['水煮蛋 2 个 + 全麦面包 1 片 + 无糖豆浆 250ml + 小番茄','燕麦 40g（牛奶冲泡）+ 香蕉 1 根 + 坚果 10g','杂粮粥 1 碗 + 茶叶蛋 1 个 + 凉拌黄瓜']},
-    {name:'午餐',kc:l,items:['糙米饭 100g + 鸡胸肉 150g + 西兰花 200g（少油）','荞麦面 + 瘦牛肉片 100g + 大量青菜','蒸红薯 + 清蒸鱼 + 凉拌豆腐']},
-    {name:'晚餐',kc:d,items:['杂粮饭 80g + 虾仁炒蛋 + 蒜蓉菠菜（少油）','鸡胸肉蔬菜沙拉（油醋汁）','豆腐菌菇汤 + 蒸蛋羹 + 凉拌木耳']},
-    {name:'加餐',kc:s,items:['苹果 / 梨 1 个 或 无糖酸奶 1 杯','原味坚果 10-15g 或 黄瓜/番茄']}
-  ];
+  const focus=p.focus||[]; const hasF=f=>focus.indexOf(f)>=0;
+  const bmi=(p.height&&p.weight)?p.weight/Math.pow(p.height/100,2):0;
+  const bigBelly=hasF('belly')||bmi>=28;   // 需要控碳水 / 减腰腹
+  const highPro=hasF('arms')||hasF('legs')||bmi<24; // 需要增肌 / 塑形
+  let breakfast=['水煮蛋 2 个 + 全麦面包 1 片 + 无糖豆浆 250ml + 小番茄','燕麦 40g（牛奶冲泡）+ 香蕉 1 根 + 坚果 10g','杂粮粥 1 碗 + 茶叶蛋 1 个 + 凉拌黄瓜'];
+  let lunch=['糙米饭 100g + 鸡胸肉 150g + 西兰花 200g（少油）','荞麦面 + 瘦牛肉片 100g + 大量青菜','蒸红薯 + 清蒸鱼 + 凉拌豆腐'];
+  let dinner=['杂粮饭 80g + 虾仁炒蛋 + 蒜蓉菠菜（少油）','鸡胸肉蔬菜沙拉（油醋汁）','豆腐菌菇汤 + 蒸蛋羹 + 凉拌木耳'];
+  let snack=['苹果 / 梨 1 个 或 无糖酸奶 1 杯','原味坚果 10-15g 或 黄瓜/番茄'];
+  const tags=[];
+  if(bigBelly){
+    breakfast[0]='水煮蛋 2 个 + 无糖豆浆 250ml + 小番茄（去面包）'; breakfast[1]='燕麦 30g（牛奶冲泡）+ 水煮蛋 1 个';
+    lunch[0]='糙米饭 80g（减半）+ 鸡胸肉 150g + 西兰花 250g'; lunch[1]='荞麦面（半份）+ 瘦牛肉片 100g + 大量青菜';
+    dinner[0]='清蒸鱼 150g + 蒜蓉西兰花 250g（不吃主食）'; dinner[1]='虾仁炒蛋 + 凉拌木耳 + 冬瓜汤（无主食）';
+    snack[0]='黄瓜 / 小番茄 随意量，或 无糖酸奶 1 杯';
+    tags.push('🍽️ 侧重控碳水：主食减半，晚餐尽量无主食');
+  }
+  if(highPro){
+    breakfast[0]='水煮蛋 3 个（2 蛋白）+ 牛奶 250ml + 燕麦 40g';
+    lunch[0]='糙米饭 120g + 鸡胸肉 180g + 西兰花 200g'; lunch[1]='米饭 + 瘦牛肉 150g + 鸡蛋 2 个 + 青菜';
+    dinner[0]='杂粮饭 100g + 虾仁 200g + 蒜蓉菠菜'; dinner[1]='鸡胸肉 180g + 豆腐 + 大量蔬菜';
+    tags.push('💪 侧重高蛋白：蛋白吃够 1.8g/kg，帮助长肌肉塑形');
+  }
+  return {
+    tags,
+    meals:[
+      {name:'早餐',kc:b,items:breakfast},
+      {name:'午餐',kc:l,items:lunch},
+      {name:'晚餐',kc:d,items:dinner},
+      {name:'加餐',kc:s,items:snack}
+    ]
+  };
 }
 function exPlan(){
   const weekday=new Date().getDay();
@@ -706,9 +773,9 @@ function renderMetrics(){
 }
 function renderMeals(){
   const p=loadProfile(); if(!p){ $('eatSub').textContent='请先在「档案」填写并保存'; return; }
-  const c=calc(p), plan=mealPlan(c.intake);
-  $('eatSub').textContent='今日总热量约 '+c.intake+' kcal，分 4 餐吃更稳';
-  $('mealPlan').innerHTML=plan.map(m=>`<div class="meal"><div class="mt"><span>${m.name}</span><span class="kc">${m.kc} kcal</span></div><ul>${m.items.map(i=>`<li>${i}</li>`).join('')}</ul></div>`).join('');
+  const c=calc(p), plan=mealPlan(c.intake,p);
+  $('eatSub').textContent='今日总热量约 '+c.intake+' kcal，分 4 餐吃更稳'+(plan.tags.length?(' ｜ '+plan.tags.join('；')):'');
+  $('mealPlan').innerHTML=plan.meals.map(m=>`<div class="meal"><div class="mt"><span>${m.name}</span><span class="kc">${m.kc} kcal</span></div><ul>${m.items.map(i=>`<li>${i}</li>`).join('')}</ul></div>`).join('');
   const tot=c.protein*4+c.fat*9+c.carb*4;
   const pp=Math.round(c.protein*4/tot*100),fp=Math.round(c.fat*9/tot*100),cp=100-pp-fp;
   $('macroBox').innerHTML=`<div class="macro-bar"><span style="width:${pp}%;background:#e0573e"></span><span style="width:${cp}%;background:#f0a93b"></span><span style="width:${fp}%;background:#1f9e88"></span></div>
@@ -754,9 +821,11 @@ function renderMealLog(){
     const thumbs=(m.photos||[]).map((p,i)=>`<div class="thumb"><img src="${p}"/><button class="x" data-x="photo" data-t="${type}" data-i="${i}">×</button></div>`).join('')
       +`<label class="thumb add">＋<input type="file" accept="image/*" data-x="up" data-t="${type}" hidden/></label>`;
     const list=(m.items||[]).map((it,i)=>`<li>${it.n} <b>${it.k}</b> kcal <button class="x2" data-x="item" data-t="${type}" data-i="${i}">×</button></li>`).join('');
+    const advice=m.advice?`<div class="ai-advice">💬 <b>AI 点评：</b>${m.advice}</div>`:'';
     return `<div class="mealog"><div class="ml-head"><span>${label}</span><span class="ml-kc">${sub} kcal</span></div>
       <div class="thumbs">${thumbs}</div>
-      <div class="ai-row"><button class="btn ghost sm" data-x="ai" data-t="${type}">🤖 AI识别这餐</button><span class="ai-status" data-t="${type}"></span></div>
+      <div class="ai-row"><button class="btn ghost sm" data-x="ai" data-t="${type}">🤖 AI识别这餐</button>${(m.photos&&m.photos.length)?`<button class="btn ghost sm" data-x="adv" data-t="${type}">💬 AI点评这餐</button>`:''}<span class="ai-status" data-t="${type}"></span></div>
+      ${advice}
       <div class="food-add">
         <input class="food-search" data-t="${type}" placeholder="搜食物，如 米饭 / 鸡胸肉"/>
         <div class="food-res" data-t="${type}"></div>
@@ -821,6 +890,62 @@ function renderCheckinInputs(){
 }
 
 /* 进度 */
+function renderReview(){
+  const box=$('reviewBox'); if(!box)return;
+  const p=loadProfile(); if(!p){ box.innerHTML='<div class="hint">请先填档案，才会有复盘分析</div>'; return; }
+  const log=loadLog(), c=calc(p);
+  /* 取最近 7 天（含今天） */
+  const days=[]; for(let i=6;i>=0;i--){ const dt=new Date(Date.now()-i*86400000); days.push(dateKey(dt)); }
+  let recDays=0, overDays=0, underDays=0, moveDays=0, waterDays=0, sleepDays=0, fullDays=0, totalIn=0, totalBurn=0;
+  const wts=[]; const waists=[];
+  days.forEach(k=>{ const r=log[k]; if(!r)return;
+    recDays++;
+    const inK=MEAL_TYPES.reduce((a,[t])=>a+((r.meals&&r.meals[t]&&r.meals[t].items)?r.meals[t].items.reduce((s,i)=>s+i.k,0):0),0);
+    const burn=(r.exercise||[]).reduce((a,x)=>a+burnOf(x.sport,x.min,p.weight),0);
+    totalIn+=inK; totalBurn+=burn;
+    if(inK>c.intake)overDays++;
+    if(inK>0&&inK<c.intake*0.8)underDays++;
+    if(r.exercise&&r.exercise.length)moveDays++;
+    if((r.water||0)>=8)waterDays++;
+    if(r.sleep)sleepDays++;
+    const full=(r.meals&&r.meals.breakfast&&r.meals.breakfast.items.length&&r.meals.lunch&&r.meals.lunch.items.length&&r.meals.dinner&&r.meals.dinner.items.length);
+    if(full)fullDays++;
+    if(r.weight)wts.push({k,w:r.weight});
+    if(r.waist)waists.push({k,w:r.waist});
+  });
+  const wChg=(wts.length>=2)?(wts[0].w-wts[wts.length-1].w):null;
+  const waistChg=(waists.length>=2)?(waists[0].w-waists[waists.length-1].w):null;
+  /* 生成建议 */
+  const tips=[];
+  if(recDays<5) tips.push('本周只记录了 '+recDays+' 天，记录越全分析越准，建议每天打卡');
+  if(wChg!==null){
+    if(wChg>0.5) tips.push('体重较周初上升 '+wChg.toFixed(1)+'kg，先别慌：可能水肿或大餐后波动，观察下周是否回落');
+    else if(wChg>0) tips.push('体重微升 '+wChg.toFixed(1)+'kg，属于正常波动，坚持「记录 + 缺口」就好');
+    else tips.push('体重较周初下降 '+Math.abs(wChg).toFixed(1)+'kg，节奏不错！按计划继续');
+  } else tips.push('本周还没称过体重，称重能帮你看到趋势');
+  if(overDays>=2) tips.push('有 '+overDays+' 天吃超了目标，下周长点心：晚餐主食减半 / 戒含糖饮料，能省下大部分超额');
+  if(underDays>=2) tips.push('有 '+underDays+' 天吃得太少（不足目标 80%），长期会掉代谢，建议按量吃够');
+  if(moveDays<3) tips.push('运动只完成 '+moveDays+' 天，目标每周 3–5 次，下周先从快走 30 分钟起步');
+  else if(moveDays>=3&&moveDays<=4) tips.push('运动 '+moveDays+' 天，达基础线；加到 4–5 天燃脂更明显');
+  else tips.push('运动 '+moveDays+' 天，很自律！注意休息日要留够，防受伤');
+  if(waterDays<recDays*0.7&&recDays>0) tips.push('饮水达标天数偏少，每天 8 杯水有助于减脂');
+  if(sleepDays<recDays*0.7&&recDays>0) tips.push('早睡天数偏少，熬夜会升高皮质醇、影响减脂，尽量 23 点前睡');
+  if(waistChg!==null&&waistChg>0) tips.push('腰围比周初粗了 '+waistChg.toFixed(1)+'cm，可能水肿或胀气，别焦虑，下周看趋势');
+  if(!tips.length) tips.push('本周各项都在轨道上，继续保持！');
+  /* 渲染 */
+  const rate=recDays?Math.round(fullDays/recDays*100):0;
+  const avgIn=recDays?Math.round(totalIn/recDays):0;
+  const avgBurn=recDays?Math.round(totalBurn/recDays):0;
+  box.innerHTML=`
+    <div class="stat-line"><span>记录天数</span><b>${recDays} / 7 天</b></div>
+    <div class="stat-line"><span>三餐全记录率</span><b>${rate}%</b></div>
+    <div class="stat-line"><span>日均摄入</span><b>${avgIn} kcal（目标 ${c.intake}）</b></div>
+    <div class="stat-line"><span>日均运动消耗</span><b>${avgBurn} kcal（运动 ${moveDays} 天）</b></div>
+    <div class="stat-line"><span>吃超目标天数</span><b>${overDays} 天</b></div>
+    <div class="stat-line"><span>体重变化</span><b>${wChg===null?'--':(wChg>0?'+':'−')+Math.abs(wChg).toFixed(1)+' kg'}</b></div>
+    <div class="stat-line"><span>腰围变化</span><b>${waistChg===null?'--':(waistChg>0?'+':'−')+Math.abs(waistChg).toFixed(1)+' cm'}</b></div>
+    <div style="margin-top:10px;"><div class="ftitle">💡 下周建议</div><ul style="font-size:13px;color:var(--ink-soft);margin:6px 0 0;padding-left:20px;">${tips.map(t=>'<li style="margin:4px 0;">'+t+'</li>').join('')}</ul></div>`;
+}
 function renderProgress(){
   const log=loadLog(), keys=Object.keys(log).sort();
   let streak=0; for(let i=keys.length-1;i>=0;i--){ const r=log[keys[i]];
@@ -841,6 +966,7 @@ function renderProgress(){
   drawChart(series,loadProfile());
   renderWeek();
   drawCirc(loadLog());
+  renderReview();
 }
 function renderWeek(){
   const g=$('weekGrid'); if(!g)return; const p=loadProfile(); if(!p){ g.innerHTML='<div class="hint">请先填档案并勾选重点部位</div>'; return; }
@@ -922,6 +1048,7 @@ $('mealLog').addEventListener('click',e=>{
     if(n&&k>0){ (d.meals[t.dataset.t]||(d.meals[t.dataset.t]={photos:[],items:[]})).items.push({n,k}); putDay(d); renderMealLog(); renderTodaySummary(); } }
   else if(t.classList.contains('fr')){ const d=getDay(); (d.meals[t.dataset.t]||(d.meals[t.dataset.t]={photos:[],items:[]})).items.push({n:t.dataset.n,k:+t.dataset.k}); putDay(d); renderMealLog(); renderTodaySummary(); }
   else if(t.dataset.x==='ai'){ aiScan(t.dataset.t); }
+  else if(t.dataset.x==='adv'){ aiAdvise(t.dataset.t); }
 });
 $('mealLog').addEventListener('input',e=>{
   if(e.target.classList.contains('food-search')){ const q=e.target.value, box=e.target.parentElement.querySelector('.food-res');

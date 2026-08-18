@@ -446,10 +446,15 @@ function loadAI(){ try{ return JSON.parse(localStorage.getItem(LS_AI))||{preset:
 function saveAI(a){ localStorage.setItem(LS_AI,JSON.stringify(a)); }
 const AI_PRESETS={ openai:{base:'https://api.openai.com/v1',model:'gpt-4o'}, qwen:{base:'https://dashscope.aliyuncs.com/compatible-mode/v1',model:'qwen-vl-max'}, zhipu:{base:'https://open.bigmodel.cn/api/paas/v4',model:'glm-4v-plus'}, kimi:{base:'https://api.moonshot.cn/v1',model:'moonshot-v1-8k-vision-preview'}, doubao:{base:'https://ark.cn-beijing.volces.com/api/v3',model:'doubao-vision-lite'}, deepseek:{base:'https://api.siliconflow.cn/v1',model:'deepseek-ai/deepseek-vl2'} };
 async function callVision(a,imageUrl,text,simple,context){
-  const body={ model:a.model, messages:[
-    {role:'system',content: simple? 'You are a test assistant. Reply briefly.' : ('你是专业的减肥营养师兼健身教练。用户发来一餐食物照片。请完成两件事：\n1) 识别食物，估算每种食物的份量(克)与热量(kcal)。\n2) 用中文给出简短、具体、可执行的点评建议(advice)，包括：这餐的优点/问题、下一餐或明天怎么调整、如何更接近今日目标。建议 2-3 句，口语化，别客套。\n只输出一个JSON对象，不要任何额外文字，格式：{"items":[{"name":"食物名","grams":150,"kcal":261}],"totalKcal":261,"advice":"点评建议"}。看不清就尽量估算。'+(context?('\n今日背景：'+context):''))},
-    {role:'user',content:[{type:'text',text:text},{type:'image_url',image_url:{url:imageUrl}}]}
-  ], temperature:0.2 };
+  // 通义千问兼容模式对 system + image_url 组合支持不稳定，统一用 user role 内嵌 prompt，image 放 text 前面
+  const sys=simple?'请简短回复。':('你是专业的减肥营养师兼健身教练。用户发来一餐食物照片。请完成两件事：\n1) 识别食物，估算每种食物的份量(克)与热量(kcal)。\n2) 用中文给出简短、具体、可执行的点评建议(advice)，包括：这餐的优点/问题、下一餐或明天怎么调整、如何更接近今日目标。建议 2-3 句，口语化，别客套。\n只输出一个JSON对象，不要任何额外文字，格式：{"items":[{"name":"食物名","grams":150,"kcal":261}],"totalKcal":261,"advice":"点评建议"}。看不清就尽量估算。'+(context?('\n今日背景：'+context):''));
+  const body={ model:a.model, messages:[{
+    role:'user',
+    content:[
+      {type:'image_url',image_url:{url:imageUrl}},
+      {type:'text',text:sys+'\n'+text}
+    ]
+  }], temperature:0.2 };
   const res=await fetch(a.base.replace(/\/$/,'')+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+a.key},body:JSON.stringify(body)});
   if(!res.ok){ let t=''; try{t=await res.text();}catch{} throw new Error('HTTP '+res.status+(t?(' '+t.slice(0,200)):'')); }
   const j=await res.json(); return (j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content)||'';
@@ -772,7 +777,7 @@ function renderMetrics(){
   $('metricHint').innerHTML='按当前节奏（每周约减 '+p.rate+'kg），预计 <b>'+c.eta+'</b> 达成目标。建议摄入已留安全下限。';
 }
 function renderMeals(){
-  const p=loadProfile(); if(!p){ $('eatSub').textContent='请先在「档案」填写并保存'; return; }
+  const p=loadProfile(); if(!p){ $('eatSub').textContent='请先在「档案」填写并保存（本设备未找到档案）'; return; }
   const c=calc(p), plan=mealPlan(c.intake,p);
   $('eatSub').textContent='今日总热量约 '+c.intake+' kcal，分 4 餐吃更稳'+(plan.tags.length?(' ｜ '+plan.tags.join('；')):'');
   $('mealPlan').innerHTML=plan.meals.map(m=>`<div class="meal"><div class="mt"><span>${m.name}</span><span class="kc">${m.kc} kcal</span></div><ul>${m.items.map(i=>`<li>${i}</li>`).join('')}</ul></div>`).join('');
@@ -783,7 +788,7 @@ function renderMeals(){
 }
 function renderExercise(){
   const e=exPlan();
-  $('moveSub').textContent='今天 ('+['日','一','二','三','四','五','六'][new Date().getDay()]+') 安排如下';
+  $('moveSub').textContent='今天周'+['日','一','二','三','四','五','六'][new Date().getDay()]+'安排如下';
   $('exPlan').innerHTML=`<div class="ex-day ${e.cls}"><div class="et">${e.title}</div><div class="em">${e.meta}</div><ol>${e.steps.map(s=>`<li>${s}</li>`).join('')}</ol></div>`;
   $('moveHint').textContent=e.tip;
   renderFocus();
@@ -1023,16 +1028,18 @@ function clearAll(){ if(confirm('确定清空全部档案与打卡记录？此�
 function restartFromToday(){ if(confirm('从今天重新开始？\n\n• 保留档案（身高体重、重点部位等）\n• 清空所有打卡记录\n• 清空云同步状态')){ localStorage.removeItem(LS_LOG); localStorage.removeItem(LS_SYNC); location.reload(); } }
 
 async function testAIConnection(a){
-  // 现场画一张有效测试图（256x256 彩色方块，带内容），验证图片识别链路，避免 1x1 小图被拒
-  const c=document.createElement('canvas'); c.width=256;c.height=256; const ctx=c.getContext('2d');
-  ctx.fillStyle='#1f9e88'; ctx.fillRect(0,0,256,256);
-  ctx.fillStyle='#fff'; ctx.fillRect(64,64,128,128);
-  ctx.fillStyle='#e0573e'; ctx.beginPath(); ctx.arc(128,128,40,0,Math.PI*2); ctx.fill();
-  const testImg=c.toDataURL('image/png');
-  const body={ model:a.model, messages:[
-    {role:'system',content:'You are a test assistant. Reply briefly.'},
-    {role:'user',content:[{type:'text',text:'这是一张测试图，请只回复 JSON：{"ok":true}'},{type:'image_url',image_url:{url:testImg}}]}
-  ], temperature:0.2 };
+  // 生成一张保守的 JPEG 测试图：无透明、有内容、尺寸适中，按通义千问兼容模式官方示例组织消息
+  const c=document.createElement('canvas'); c.width=160;c.height=160; const ctx=c.getContext('2d');
+  ctx.fillStyle='#1f9e88'; ctx.fillRect(0,0,160,160);
+  ctx.fillStyle='#fff'; ctx.fillRect(40,40,80,80);
+  const testImg=c.toDataURL('image/jpeg',0.85);
+  const body={ model:a.model, messages:[{
+    role:'user',
+    content:[
+      {type:'image_url',image_url:{url:testImg}},
+      {type:'text',text:'这是一张测试图，请只回复 JSON：{"ok":true}'}
+    ]
+  }], temperature:0.2 };
   const res=await fetch(a.base.replace(/\/$/,'')+'/chat/completions',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+a.key},body:JSON.stringify(body)});
   if(!res.ok){ let t=''; try{t=await res.text();}catch{} throw new Error('HTTP '+res.status+(t?(' '+t.slice(0,200)):'')); }
   return true;
